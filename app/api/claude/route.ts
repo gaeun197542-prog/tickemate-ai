@@ -19,7 +19,10 @@ interface UserInput {
 export async function POST(request: Request) {
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
-    return new Response('Missing ANTHROPIC_API_KEY in environment', { status: 500 })
+    return new Response(
+      `Missing ANTHROPIC_API_KEY in environment (VERCEL_ENV=${process.env.VERCEL_ENV ?? 'none'}, region=${process.env.VERCEL_REGION ?? 'none'})`,
+      { status: 500 },
+    )
   }
 
   const { userInput } = (await request.json()) as { userInput: UserInput }
