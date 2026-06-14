@@ -1,52 +1,91 @@
-import { NextResponse } from 'next/server'
+import Anthropic from '@anthropic-ai/sdk'
+
+interface UserInput {
+  concert: string
+  platform: string
+  nationality: string
+  timezone: string
+  ticketingTime: string
+  concertDate: string
+  weverseNname: string
+  nolName: string
+  yes24Name: string
+  cards: string[]
+  passportExpiry: string
+  experience: string
+  language: string
+}
 
 export async function POST(request: Request) {
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
-    return NextResponse.json({ error: 'Missing ANTHROPIC_API_KEY in environment' }, { status: 500 })
+    return new Response('Missing ANTHROPIC_API_KEY in environment', { status: 500 })
   }
 
-  const body = await request.json()
-  const { performance, seatType, count } = body as {
-    performance: string
-    seatType: string
-    count: number
-  }
+  const { userInput } = (await request.json()) as { userInput: UserInput }
 
-  const prompt = `You are a K-POP ticket reservation assistant for international fans. Generate a short performance report for the selected concert. Include:
-1) A brief overview of the performance,
-2) Why this performance is a good match for foreign K-POP fans,
-3) A short travel or ticket recommendation.
+  const client = new Anthropic({ apiKey })
 
-Performance: ${performance}
-Seat type: ${seatType}
-Ticket count: ${count}
+  const prompt = `You are TickeMate AI, a K-POP concert ticketing strategy advisor for international fans.
 
-Return the response in Korean with clear headings and concise bullet-style sentences.`
+Write a personalized ticketing strategy report in ${userInput.language}, formatted in Markdown using "##" section headings and "-" bullet lists.
 
-  const response = await fetch('https://api.anthropic.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-API-Key': apiKey,
+## Fan Details
+- Concert: ${userInput.concert}
+- Platform: ${userInput.platform}
+- Concert date: ${userInput.concertDate || 'not specified'}
+- Ticketing opens: ${userInput.ticketingTime} KST
+- Fan's timezone: ${userInput.timezone}
+- Nationality: ${userInput.nationality}
+- Passport expiry: ${userInput.passportExpiry || 'not specified'}
+- Ticketing experience: ${userInput.experience}
+- Account names — Weverse: "${userInput.weverseNname}", NOL/Interpark: "${userInput.nolName}", Yes24: "${userInput.yes24Name}"
+- Payment cards available: ${userInput.cards.length ? userInput.cards.join(', ') : 'none specified'}
+
+Cover the following sections:
+## Account Check
+Flag any mismatches between the account names above and explain why exact name matching matters.
+
+## Timing Strategy
+Convert the ticketing open time to the fan's local timezone and give a preparation timeline.
+
+## Payment Strategy
+Recommend the best card(s) from the list for this platform, with a fallback order if a card is declined.
+
+## Risk Check
+Flag passport expiry issues (international travel typically needs 6+ months validity) and any other risks for this fan's situation.
+
+## Action Checklist
+A short, ordered checklist of what to do before, during, and after the ticketing window.
+
+Keep it concise, practical, and encouraging.`
+
+  const encoder = new TextEncoder()
+
+  const readable = new ReadableStream({
+    async start(controller) {
+      try {
+        const stream = client.messages.stream({
+          model: 'claude-opus-4-8',
+          max_tokens: 4096,
+          thinking: { type: 'adaptive' },
+          messages: [{ role: 'user', content: prompt }],
+        })
+
+        for await (const event of stream) {
+          if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+            controller.enqueue(encoder.encode(event.delta.text))
+          }
+        }
+
+        controller.close()
+      } catch (err) {
+        controller.error(err)
+      }
     },
-    body: JSON.stringify({
-      model: 'claude-3.5-mini',
-      messages: [
-        { role: 'system', content: 'You are a helpful assistant that writes short concert reports for foreign K-POP fans.' },
-        { role: 'user', content: prompt },
-      ],
-      max_tokens_to_sample: 300,
-      temperature: 0.2,
-    }),
   })
 
-  if (!response.ok) {
-    const errorText = await response.text()
-    return NextResponse.json({ error: 'Claude API error', details: errorText }, { status: response.status })
-  }
-
-  const data = await response.json()
-  const completion = data?.completion || data?.choices?.[0]?.message?.content || data?.choices?.[0]?.text || ''
-  return NextResponse.json({ report: completion })
+  return new Response(readable, {
+    headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+  })
 }
